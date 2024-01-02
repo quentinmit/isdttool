@@ -175,11 +175,23 @@ class AlarmToneTaskReq:
 class AlarmToneTaskResp:
     status: int = csfield(cs.Byte) # TODO: true if == -1
 
+# 0xC1 RenameResp
+# 0xE1 HardwareInfoResp
+# 0xE5 ElectricResp
+# 0xE7 ChargerWorkStateResp
+# 0xEB WorkTasksResp
+# 0xFB IRResp
+# 0xF1 OTAUpgradeCmdResp
+# 0xF3 OTAEraseResp
+# 0xF5 OTAWriteResp
+# 0xF7 OTAChecksumResp
+# 0xFD OTARebootResp
+
 @contextlib.asynccontextmanager
 async def connect(device: BLEDevice, info: DeviceInfo):
     device_uuid = uuid4()
     connected = False
-    for timeout in (1.0, 5.0, 5.0, 5.0):
+    for timeout in (5.0, 5.0, 5.0, 5.0):
         logging.info("Attempting to connect to %s with timeout of %fs", device, timeout)
         try:
             async with BleakClient(device, timeout=timeout) as client:
@@ -204,7 +216,7 @@ async def connect(device: BLEDevice, info: DeviceInfo):
         except (TimeoutError, BleakError):
             if connected:
                 raise
-            logging.warn("failed to connect", exc_info=True)
+            logging.warning("failed to connect", exc_info=True)
             await asyncio.sleep(5.0)
     raise Exception("failed to connect")
 
@@ -214,31 +226,38 @@ class BluetoothCharger:
         self.info = info
         self.characteristicAF01 = characteristicAF01
         self.characteristicAF02 = characteristicAF02
+        self.af01_future = None
 
     def _af02_callback(self, sender: BleakGATTCharacteristic, data: bytearray):
+        obj = data
         match tuple(data[0:1]):
             case (0x19, _):
-                # Bind response
-                pass
+                obj = BindResp.parser.parse(data)
             case (0xE1, _):
-                # Hardware info response
-                pass
+                obj = BLEHardwareInfoResp.parser.parse(data)
             case (_, 0xF5):
                 # OTA Write response
                 pass
-        print(f"{sender}: {data}")
+        logging.info("AF02: %s", obj)
 
     def _af01_callback(self, sender: BleakGATTCharacteristic, data: bytearray):
         if cls := _CMD_CLASSES.get(data[1]):
             obj = cls.parser.parse(data)
-            logging.info("Received %s", obj)
+            if self.af01_future is not None:
+                self.af01_future.set_result(obj)
+                self.af01_future = None
+            else:
+                logging.warning("Unexpected AF01: %s", obj)
         else:
             logging.warning("Unknown AF01 message: %s", data)
 
-    async def write_af01(self, packet):
+    async def request_af01(self, packet):
+        fut = asyncio.get_running_loop().create_future()
+        self.af01_future = fut
         if not isinstance(packet, bytes):
             packet = packet.parser.build(packet)
         await self.client.write_gatt_char(self.characteristicAF01, packet)
+        return await fut
 
     async def write_af02(self, packet):
         if not isinstance(packet, bytes):
@@ -248,8 +267,11 @@ class BluetoothCharger:
     async def get_ble_hardware_info(self):
         await self.write_af02(BLEHardwareInfoReq())
 
-    async def get_working_status(self):
-        await self.write_af01(PS200WorkingStatusReq())
+    async def get_ps200_dc_status(self):
+        return await self.request_af01(PS200DCStatusReq())
+
+    async def get_ps200_working_status(self):
+        return await self.request_af01(PS200WorkingStatusReq())
 
 async def enumerate_devices():
     async with BleakScanner(
@@ -275,9 +297,10 @@ async def main():
                 for characteristic in service.characteristics:
                     print("Characteristic:", characteristic.uuid)
             await charger.get_ble_hardware_info()
-            await charger.get_working_status()
-            
-            await asyncio.sleep(30)
+            while True:
+                logging.info("DC status: %s", await charger.get_ps200_dc_status())
+                logging.info("Working status: %s", await charger.get_ps200_working_status())
+                await asyncio.sleep(1)
             return
 
 if __name__ == '__main__':
