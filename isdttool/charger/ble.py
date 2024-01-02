@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import logging
 
 from bleak import BleakScanner, BleakClient, BleakGATTCharacteristic, AdvertisementData, BLEDevice, BleakError
+from bleak_retry_connector import establish_connection
 import construct as cs
 from construct_dataclasses import dataclass_struct, csfield, subcsfield, to_struct
 
@@ -191,34 +192,26 @@ class AlarmToneTaskResp:
 async def connect(device: BLEDevice, info: DeviceInfo):
     device_uuid = uuid4()
     connected = False
-    for timeout in (5.0, 5.0, 5.0, 5.0):
-        logging.info("Attempting to connect to %s with timeout of %fs", device, timeout)
-        try:
-            async with BleakClient(device, timeout=timeout) as client:
-                serviceFEE0 = client.services.get_service(UUID_BLE_SERVICE_FEE0)
-                serviceAF00 = client.services.get_service(UUID_BLE_SERVICE_AF00)
-                if serviceAF00:
-                    characteristicAF01 = serviceAF00.get_characteristic(UUID_BLE_WRITE_AF01)
-                    characteristicAF02 = serviceAF00.get_characteristic(UUID_BLE_WRITE_AF02)
-                    charger = BluetoothCharger(client, info, characteristicAF01, characteristicAF02)
-                    await client.start_notify(characteristicAF01, charger._af01_callback)
-                    await client.start_notify(characteristicAF02, charger._af02_callback)
-                    descriptor = characteristicAF01.get_descriptor(UUID_DESCRIPTOR)
-                    if descriptor:
-                        try:
-                            await client.write_gatt_descriptor(descriptor.handle, b"\x01\x00") # ENABLE_NOTIFICATION_VALUE
-                        except:
-                            logging.exception("failed to set ENABLE_NOTIFICATION_VALUE")
-                    logging.info("Connected")
-                    connected = True
-                    yield charger
-                    return
-        except (TimeoutError, BleakError):
-            if connected:
-                raise
-            logging.warning("failed to connect", exc_info=True)
-            await asyncio.sleep(5.0)
-    raise Exception("failed to connect")
+    client = await establish_connection(BleakClient, device, device.address)
+    try:
+        serviceFEE0 = client.services.get_service(UUID_BLE_SERVICE_FEE0)
+        serviceAF00 = client.services.get_service(UUID_BLE_SERVICE_AF00)
+        if serviceAF00:
+            characteristicAF01 = serviceAF00.get_characteristic(UUID_BLE_WRITE_AF01)
+            characteristicAF02 = serviceAF00.get_characteristic(UUID_BLE_WRITE_AF02)
+            charger = BluetoothCharger(client, info, characteristicAF01, characteristicAF02)
+            await client.start_notify(characteristicAF01, charger._af01_callback)
+            await client.start_notify(characteristicAF02, charger._af02_callback)
+            descriptor = characteristicAF01.get_descriptor(UUID_DESCRIPTOR)
+            if descriptor:
+                try:
+                    await client.write_gatt_descriptor(descriptor.handle, b"\x01\x00") # ENABLE_NOTIFICATION_VALUE
+                except:
+                    logging.exception("failed to set ENABLE_NOTIFICATION_VALUE")
+            yield charger
+    finally:
+        await client.disconnect()
+    raise ValueError("service/characteristics not found")
 
 class BluetoothCharger:
     def __init__(self, client: BleakClient, info: DeviceInfo, characteristicAF01, characteristicAF02):

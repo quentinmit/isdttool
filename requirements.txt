@@ -1,4 +1,6 @@
 hidapi
 bleak
+bleak-retry-connector
 dataclass-struct
 construct
+construct-dataclasses
