@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 import logging
 
 from bleak import BleakScanner, BleakClient, BleakGATTCharacteristic, AdvertisementData, BLEDevice, BleakError
-from bleak_retry_connector import establish_connection
+from bleak_retry_connector import establish_connection, retry_bluetooth_connection_error
 import construct as cs
 from construct_dataclasses import dataclass_struct, csfield, subcsfield, to_struct
 
@@ -244,18 +244,20 @@ class BluetoothCharger:
         else:
             logging.warning("Unknown AF01 message: %s", data)
 
+    @retry_bluetooth_connection_error()
+    async def _write_char(self, characteristic, packet):
+        if not isinstance(packet, bytes):
+            packet = packet.parser.build(packet)
+        await self.client.write_gatt_char(characteristic, packet)
+
     async def request_af01(self, packet):
         fut = asyncio.get_running_loop().create_future()
         self.af01_future = fut
-        if not isinstance(packet, bytes):
-            packet = packet.parser.build(packet)
-        await self.client.write_gatt_char(self.characteristicAF01, packet)
+        await self._write_char(self.characteristicAF01, packet)
         return await fut
 
     async def write_af02(self, packet):
-        if not isinstance(packet, bytes):
-            packet = packet.parser.build(packet)
-        await self.client.write_gatt_char(self.characteristicAF02, packet)
+        await self._write_char(self.characteristicAF02, packet)
 
     async def get_ble_hardware_info(self):
         await self.write_af02(BLEHardwareInfoReq())
