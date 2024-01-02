@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 import logging
 
 from bleak import BleakScanner, BleakClient, BleakGATTCharacteristic, AdvertisementData, BLEDevice, BleakError
-from bleak_retry_connector import establish_connection, retry_bluetooth_connection_error
+from bleak_retry_connector import establish_connection, retry_bluetooth_connection_error, BLEAK_RETRY_EXCEPTIONS
 import construct as cs
 from construct_dataclasses import dataclass_struct, csfield, subcsfield, to_struct
 
@@ -286,17 +286,20 @@ async def main():
     logging.getLogger("bleak.backends.bluezdbus.manager").setLevel(logging.INFO)
     async for device, advertisement, info in enumerate_devices():
         print(device, advertisement, info)
-        async with connect(device, info) as charger:
-            for service in charger.client.services.services.values():
-                print("Service:", service.uuid)
-                for characteristic in service.characteristics:
-                    print("Characteristic:", characteristic.uuid)
-            await charger.get_ble_hardware_info()
-            while True:
-                logging.info("DC status: %s", await charger.get_ps200_dc_status())
-                logging.info("Working status: %s", await charger.get_ps200_working_status())
-                await asyncio.sleep(1)
-            return
-
+        while True:
+            try:
+                async with connect(device, info) as charger:
+                    for service in charger.client.services.services.values():
+                        print("Service:", service.uuid)
+                        for characteristic in service.characteristics:
+                            print("Characteristic:", characteristic.uuid)
+                    await charger.get_ble_hardware_info()
+                    while True:
+                        logging.info("DC status: %s", await charger.get_ps200_dc_status())
+                        logging.info("Working status: %s", await charger.get_ps200_working_status())
+                        await asyncio.sleep(1)
+            except BLEAK_RETRY_EXCEPTIONS:
+                logging.warning("connection lost", exc_info=True)
+            await asyncio.sleep(1)
 if __name__ == '__main__':
     asyncio.run(main())
