@@ -115,7 +115,11 @@ class BLEHardwareInfoResp:
     sub_hardware_version: int = csfield(cs.Byte)
     main_software_version: int = csfield(cs.Byte)
     sub_software_version: int = csfield(cs.Byte)
-    device_id: int = csfield(cs.Bytes(8))
+    device_id: bytes = csfield(cs.Bytes(8))
+
+@req(0x2A)
+class VerifyTouchReq:
+    pass
 
 @req(0x92)
 class AlarmToneReq:
@@ -172,16 +176,118 @@ class PS200DCStatusResp:
 @req(0x9C, direction=0x13)
 class AlarmToneTaskReq:
     task_type: int = csfield(cs.Byte)
-@req(0x9D)
+@resp(0x9D)
 class AlarmToneTaskResp:
     status: int = csfield(cs.Byte) # TODO: true if == -1
 
-# 0xC1 RenameResp
-# 0xE1 HardwareInfoResp
-# 0xE5 ElectricResp
-# 0xE7 ChargerWorkStateResp
-# 0xEB WorkTasksResp
-# 0xFB IRResp
+@req(0xB0)
+class SingleByteSetReq:
+    data: bytes = csfield(cs.GreedyBytes)
+
+@req(0xB2)
+class ParameterReq:
+    pass
+
+@req(0xC0)
+class RenameReq:
+    name: str = csfield(cs.PaddedString(14, "ascii"))
+
+@resp(0xC1)
+class RenameResp:
+    status: bool = csfield(cs.Flag)
+
+@req(0xE0, direction=0x13)
+class HardwareInfoReq:
+    pass
+
+@resp(0xE1)
+class HardwareInfoResp:
+    device_id: bytes = csfield(cs.Bytes(8))
+    main_hardware_version: int = csfield(cs.Byte)
+    sub_hardware_version: int = csfield(cs.Byte)
+    main_software_version: int = csfield(cs.Byte)
+    sub_software_version: int = csfield(cs.Byte)
+    boot_main_version: int = csfield(cs.Byte)
+    boot_sub_version: int = csfield(cs.Byte)
+    boot_mend_version: int = csfield(cs.Byte)
+    boot_compile_version: int = csfield(cs.Byte)
+    app_main_version: int = csfield(cs.Byte)
+    app_sub_version: int = csfield(cs.Byte)
+    app_mend_version: int = csfield(cs.Byte)
+    app_compile_version: int = csfield(cs.Byte)
+
+@req(0xE4)
+class ElectricReq:
+    channel_id: int = csfield(cs.Byte)
+
+Length = cs.ExprAdapter(cs.Pointer(-1, cs.Tell), cs.obj_+1, cs.obj_)
+
+@resp(0xE5)
+class ElectricResp:
+    channel_id: int = csfield(cs.Byte)
+    length: int = csfield(Length)
+    input_voltage: int = csfield(cs.IfThenElse(cs.this.length > 35, cs.Int32ul, cs.Int16ul))
+    input_current: int = csfield(cs.Int32ul)
+    output_voltage: int|None = csfield(cs.Optional(cs.IfThenElse(cs.this.length > 35, cs.Int32ul, cs.Int16ul)))
+    charging_current: int|None = csfield(cs.Optional(cs.Int32ul))
+    cell_voltage_list: list[int]|None = csfield(cs.Optional(cs.Array(
+        lambda this: 8 if this.length < 35 else 16,
+        cs.Int16ul,
+    )))
+
+@req(0xE6, direction=0x13)
+class ChargerWorkStateReq:
+    channel_id: int = csfield(cs.Byte)
+
+@resp(0xE7)
+class ChargerWorkStateResp:
+    channel_id: int = csfield(cs.Byte)
+    work_state: int = csfield(cs.Byte)
+    capacity_percentage: int = csfield(cs.Byte)
+    capacity_done: int = csfield(cs.Int32ul)
+    energy_done: int = csfield(cs.Int32ul)
+    work_period: int = csfield(cs.Int32ul)
+    battery_type: int = csfield(cs.Byte)
+    unit_serials_num: int = csfield(cs.Byte)
+    link_type: int = csfield(cs.Byte)
+    full_charged_volt: int = csfield(cs.Int16ul)
+    work_current: int = csfield(cs.Int32ul)
+    charging_battery_num_whole: int = csfield(cs.Int16ul)
+    charging_battery_num_current: int = csfield(cs.Int16ul)
+    min_input_volt: int = csfield(cs.Int16ul)
+    max_output_power: int = csfield(cs.Int32ul)
+    error_code: int = csfield(cs.Int16ul)
+    parallel_state: bool|None = csfield(cs.Optional(cs.Flag))
+
+@req(0xEA, direction=0x13)
+class WorkTasksReq:
+    channel_id: int = csfield(cs.Byte)
+    task_type: int = csfield(cs.Byte)
+    battery_type: int = csfield(cs.Byte)
+    linking_type: int = csfield(cs.Byte)
+    work_current: int = csfield(cs.Int32ul)
+    cells: int = csfield(cs.Byte)
+    full_changed_volt: int = csfield(cs.Int16ul)
+    capacity_limit: int = csfield(cs.Int32ul)
+
+@resp(0xEB)
+class WorkTasksResp:
+    channel_id: int = csfield(cs.Byte)
+    error_code: int = csfield(cs.Byte)
+
+@req(0xFA, direction=0x13)
+class IRReq:
+    channel_id: int = csfield(cs.Byte)
+
+@resp(0xFB)
+class IRResp:
+    channel_id: int = csfield(cs.Byte)
+    length: int = csfield(Length)
+    ir: list[int] = csfield(cs.Array(
+        lambda this: 8 if this.length < 20 else 16,
+        cs.Int16ul,
+    ))
+
 # 0xF1 OTAUpgradeCmdResp
 # 0xF3 OTAEraseResp
 # 0xF5 OTAWriteResp
